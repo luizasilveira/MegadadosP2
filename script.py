@@ -104,10 +104,13 @@ if __name__ == '__main__':
 
     # csvs
     inter_df = pd.DataFrame(list_inter_rel, columns=["palavra", "relevancia"])
-    inter_csv = inter_df.to_csv("inter.csv", index=False)
+    inter_csv = inter_df.to_csv(
+        "s3://megadados-alunos/gabriela-luiza/inter.csv", index=False)
     iphone_df = pd.DataFrame(list_iphone_rel, columns=[
                              "palavra", "relevancia"])
-    iphone_csv = iphone_df.to_csv("iphone.csv", index=False)
+    iphone_csv = iphone_df.to_csv(
+        "s3://megadados-alunos/gabriela-luiza/iphone.csv", index=False)
     android_df = pd.DataFrame(list_android_rel, columns=[
                               "palavra", "relevancia"])
-    android_csv = android_df.to_csv("android.csv", index=False)
+    android_csv = android_df.to_csv(
+        "s3://megadados-alunos/gabriela-luiza/android.csv", index=False)
