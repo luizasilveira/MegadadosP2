@@ -6,13 +6,15 @@ import pandas as pd
 def conta_palavras(item):
     url, conteudo = item
     palavras = conteudo.strip().split()
-    return [(palavra.lower(), 1) for palavra in palavras]
+    palavras_ = [p for p in palavras if p.isalpha()]
+    return [(palavra.lower(), 1) for palavra in palavras_]
 
 
 def conta_documentos(item):
     url, conteudo = item
     palavras = conteudo.strip().split()
-    return [(palavra.lower(), 1) for palavra in set(palavras)]
+    palavras_ = [p for p in palavras if p.isalpha()]
+    return [(palavra.lower(), 1) for palavra in set(palavras_)]
 
 
 def junta_contagens(nova_contagem, contagem_atual):
@@ -43,74 +45,72 @@ def computa_rel(item):
     return (palavra, relevancia)
 
 
-if __name__ == '__main__':
+sc = pyspark.SparkContext(appName="Projeto2")
+rdd = sc.sequenceFile("s3://megadados-alunos/web-brasil")
 
-    sc = pyspark.SparkContext(appName="Projeto2")
-    rdd = sc.sequenceFile("s3://megadados-alunos/web-brasil")
+N_docs = rdd.count()
 
-    N_docs = rdd.count()
+# rdds específicos
+rdd_ni = rdd.filter(lambda x: "nike" in x[1] and not "adidas" in x[1])
+rdd_ad = rdd.filter(lambda x: "adidas" in x[1] and not "nike" in x[1])
+rdd_in = rdd.filter(lambda x: "nike" in x[1] and "adidas" in x[1])
 
-    # rdds específicos
-    rdd_ip = rdd.filter(lambda x: "iphone" in x[1] and not "android" in x[1])
-    rdd_an = rdd.filter(lambda x: "android" in x[1] and not "iphone" in x[1])
-    rdd_in = rdd.filter(lambda x: "iphone" in x[1] and "android" in x[1])
+# conta palavras
+rdd_nike = rdd_ni.flatMap(conta_palavras).reduceByKey(junta_contagens)
+rdd_adidas = rdd_ad.flatMap(conta_palavras).reduceByKey(junta_contagens)
+rdd_inter = rdd_in.flatMap(conta_palavras).reduceByKey(junta_contagens)
 
-    # conta palavras
-    rdd_iphone = rdd_ip.flatMap(conta_palavras).reduceByKey(junta_contagens)
-    rdd_android = rdd_an.flatMap(conta_palavras).reduceByKey(junta_contagens)
-    rdd_inter = rdd_in.flatMap(conta_palavras).reduceByKey(junta_contagens)
+# conta documentos
+rdd_nike_docs = rdd_ni.flatMap(
+    conta_documentos).reduceByKey(junta_contagens)
+rdd_adidas_docs = rdd_ad.flatMap(
+    conta_documentos).reduceByKey(junta_contagens)
+rdd_inter_docs = rdd_in.flatMap(
+    conta_documentos).reduceByKey(junta_contagens)
 
-    # conta documentos
-    rdd_iphone_docs = rdd_ip.flatMap(
-        conta_documentos).reduceByKey(junta_contagens)
-    rdd_android_docs = rdd_an.flatMap(
-        conta_documentos).reduceByKey(junta_contagens)
-    rdd_inter_docs = rdd_in.flatMap(
-        conta_documentos).reduceByKey(junta_contagens)
+doc_min = 15
+doc_max = 0.60 * N_docs
 
-    doc_min = 10
-    doc_max = 0.70 * N_docs
+# filtra documentos
+rdd_nike_docs_filtrado = rdd_nike_docs.filter(filtra_doc_freq)
+rdd_adidas_docs_filtrado = rdd_adidas_docs.filter(filtra_doc_freq)
+rdd_inter_docs_filtrado = rdd_inter_docs.filter(filtra_doc_freq)
 
-    # filtra documentos
-    rdd_iphone_docs_filtrado = rdd_iphone_docs.filter(filtra_doc_freq)
-    rdd_android_docs_filtrado = rdd_android_docs.filter(filtra_doc_freq)
-    rdd_inter_docs_filtrado = rdd_inter_docs.filter(filtra_doc_freq)
+# computa frequências
+rdd_nike_freq = rdd_nike.map(computa_freq)
+rdd_adidas_freq = rdd_adidas.map(computa_freq)
+rdd_inter_freq = rdd_inter.map(computa_freq)
 
-    # computa frequências
-    rdd_iphone_freq = rdd_iphone.map(computa_freq)
-    rdd_android_freq = rdd_android.map(computa_freq)
-    rdd_inter_freq = rdd_inter.map(computa_freq)
+# computa idfs
+rdd_nike_idf = rdd_nike_docs_filtrado.map(computa_idf)
+rdd_adidas_idf = rdd_adidas_docs_filtrado.map(computa_idf)
+rdd_inter_idf = rdd_inter_docs_filtrado.map(computa_idf)
 
-    # computa idfs
-    rdd_iphone_idf = rdd_iphone_docs_filtrado.map(computa_idf)
-    rdd_android_idf = rdd_android_docs_filtrado.map(computa_idf)
-    rdd_inter_idf = rdd_inter_docs_filtrado.map(computa_idf)
+# computa relevâncias
+# intersecção
+rdd_inter_join = rdd_inter_freq.join(rdd_inter_idf)
+rdd_inter_rel = rdd_inter_join.map(computa_rel)
+list_inter_rel = rdd_inter_rel.takeOrdered(100, key=lambda x: -x[1])
 
-    # computa relevâncias
-    # intersecção
-    rdd_inter_join = rdd_inter_freq.join(rdd_inter_idf)
-    rdd_inter_rel = rdd_inter_join.map(computa_rel)
-    list_inter_rel = rdd_inter_rel.takeOrdered(100, key=lambda x: -x[1])
+# nike
+rdd_nike_join = rdd_nike_freq.join(rdd_nike_idf)
+rdd_nike_rel = rdd_nike_join.map(computa_rel)
+list_nike_rel = rdd_nike_rel.takeOrdered(100, key=lambda x: -x[1])
 
-    # iphone
-    rdd_iphone_join = rdd_iphone_freq.join(rdd_iphone_idf)
-    rdd_iphone_rel = rdd_iphone_join.map(computa_rel)
-    list_iphone_rel = rdd_iphone_rel.takeOrdered(100, key=lambda x: -x[1])
+# adidas
+rdd_adidas_join = rdd_adidas_freq.join(rdd_adidas_idf)
+rdd_adidas_rel = rdd_adidas_join.map(computa_rel)
+list_adidas_rel = rdd_adidas_rel.takeOrdered(100, key=lambda x: -x[1])
 
-    # android
-    rdd_android_join = rdd_android_freq.join(rdd_android_idf)
-    rdd_android_rel = rdd_android_join.map(computa_rel)
-    list_android_rel = rdd_android_rel.takeOrdered(100, key=lambda x: -x[1])
 
-    # csvs
-    inter_df = pd.DataFrame(list_inter_rel, columns=["palavra", "relevancia"])
-    inter_csv = inter_df.to_csv(
-        "s3://megadados-alunos/gabriela-luiza/inter.csv", index=False)
-    iphone_df = pd.DataFrame(list_iphone_rel, columns=[
-                             "palavra", "relevancia"])
-    iphone_csv = iphone_df.to_csv(
-        "s3://megadados-alunos/gabriela-luiza/iphone.csv", index=False)
-    android_df = pd.DataFrame(list_android_rel, columns=[
-                              "palavra", "relevancia"])
-    android_csv = android_df.to_csv(
-        "s3://megadados-alunos/gabriela-luiza/android.csv", index=False)
+inter_df = pd.DataFrame(list_inter_rel, columns=["palavra", "relevancia"])
+inter_csv = inter_df.to_csv(
+    "s3://megadados-alunos/gabriela-luiza/inter.csv", index=False)
+nike_df = pd.DataFrame(list_nike_rel, columns=[
+    "palavra", "relevancia"])
+nike_csv = nike_df.to_csv(
+    "s3://megadados-alunos/gabriela-luiza/nike.csv", index=False)
+adidas_df = pd.DataFrame(list_adidas_rel, columns=[
+    "palavra", "relevancia"])
+adidas_csv = adidas_df.to_csv(
+    "s3://megadados-alunos/gabriela-luiza/adidas.csv", index=False)
